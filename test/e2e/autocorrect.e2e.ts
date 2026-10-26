@@ -11,13 +11,20 @@ async function settings(patch: Partial<Settings>) {
 }
 
 async function documentText() {
-  return browser.executeObsidian(({ app, obsidian }) => app.workspace.getActiveViewOfType(obsidian.MarkdownView)!.editor.getValue());
+  return browser.executeObsidian(({ app, obsidian }) => {
+    let view = app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    if (view?.containerEl.ownerDocument !== document) app.workspace.iterateAllLeaves(leaf => {
+      if (leaf.view instanceof obsidian.MarkdownView && leaf.view.containerEl.ownerDocument === document) view = leaf.view;
+    });
+    return view!.editor.getValue();
+  });
 }
 
 async function openText(text = '', source = true, cursor?: number) {
   await browser.executeObsidian(async ({ app, obsidian }, text, source, cursor) => {
     const leaf = app.workspace.getLeaf(false);
     await leaf.setViewState({ type: 'markdown', state: { file: 'Test.md', mode: 'source', source } });
+    app.workspace.setActiveLeaf(leaf, { focus: true });
     const view = app.workspace.getActiveViewOfType(obsidian.MarkdownView)!;
     view.editor.setValue(text);
     view.editor.setCursor(view.editor.offsetToPos(cursor ?? text.length));
@@ -47,9 +54,10 @@ describe('Auto Correct in real Obsidian', () => {
     // Trigger Chromium's lazy dictionary loading with real editor input.
     await browser.keys(' ');
     try {
-      await browser.waitUntil(async () => browser.executeObsidian(({ require }, word) => {
-        const electron = require('electron');
-        return electron.webFrame.isWordMisspelled(word) && electron.webFrame.getWordSuggestions(word).length > 0;
+      await browser.waitUntil(async () => browser.executeObsidian(async ({ require, plugins }, word) => {
+        const session = require('electron').remote.getCurrentWebContents().session;
+        const result = await plugins.autoCorrect.nativeSpellchecker.check(word, session.getSpellCheckerLanguages());
+        return result.misspelled && result.suggestions.length > 0;
       }, typo), { timeout: 60000, interval: 500, timeoutMsg: 'Native English spellchecker did not become ready' });
     } catch (error) {
       const diagnostics = await browser.executeObsidian(({ require }) => {
@@ -70,7 +78,10 @@ describe('Auto Correct in real Obsidian', () => {
       await browser.saveScreenshot('artifacts/native-spellcheck.png').catch(() => {});
       throw error;
     }
-    suggestion = await browser.executeObsidian(({ require }, word) => require('electron').webFrame.getWordSuggestions(word)[0] as string, typo);
+    suggestion = await browser.executeObsidian(async ({ require, plugins }, word) => {
+      const languages = require('electron').remote.getCurrentWebContents().session.getSpellCheckerLanguages();
+      return (await plugins.autoCorrect.nativeSpellchecker.check(word, languages)).suggestions[0];
+    }, typo);
     expect(suggestion).not.toBe(typo);
   });
 
@@ -114,9 +125,12 @@ describe('Auto Correct in real Obsidian', () => {
   });
 
   it('supports Tab and preserves editor indentation', async () => {
+    await settings({ enabled: false }); await openText(typo); await browser.keys('Tab');
+    const baseline = await documentText();
     await settings({ tab: true }); await openText(typo); await browser.keys('Tab');
-    await browser.waitUntil(async () => (await documentText()).startsWith(suggestion), { timeout: 8000 });
-    expect((await documentText()).slice(suggestion.length)).toMatch(/^[\t ]+$/u);
+    await settings({ enabled: true });
+    await openText(typo); await browser.keys('Tab');
+    await expectText(baseline.replace(typo, suggestion));
   });
 
   for (const [label, prefix, suffix] of [
@@ -154,7 +168,10 @@ describe('Auto Correct in real Obsidian', () => {
     } finally {
       if (!alreadySaved) await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.removeWordFromSpellCheckerDictionary(word), typo);
     }
-    await browser.waitUntil(async () => browser.executeObsidian(({ require }, word) => require('electron').webFrame.isWordMisspelled(word), typo), { timeout: 8000 });
+    await browser.waitUntil(async () => browser.executeObsidian(async ({ require, plugins }, word) => {
+      const languages = require('electron').remote.getCurrentWebContents().session.getSpellCheckerLanguages();
+      return (await plugins.autoCorrect.nativeSpellchecker.check(word, languages)).misspelled;
+    }, typo), { timeout: 8000 });
     await openText(typo); await browser.keys(' '); await expectText(`${suggestion} `);
   });
 
@@ -165,24 +182,47 @@ describe('Auto Correct in real Obsidian', () => {
     await obsidianPage.enablePlugin('auto-correct');
     const saved = await browser.executeObsidian(({ plugins }) => plugins.autoCorrect.settings);
     expect(saved.space).toBe(false); expect(saved.punctuation).toBe('!');
-    await openText(typo); await browser.keys('!'); await expectText(`${suggestion}!`);
+    await openText(typo);
+    await browser.execute(() => {
+      (window as unknown as { lastDiagnosticKey: unknown }).lastDiagnosticKey = null;
+      document.addEventListener('keydown', event => {
+        (window as unknown as { lastDiagnosticKey: unknown }).lastDiagnosticKey = { key: event.key, ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey };
+      }, { capture: true, once: true });
+    });
+    await browser.keys('!');
+    try { await expectText(`${suggestion}!`); }
+    catch (error) {
+      console.log('Reload diagnostics:', await browser.executeObsidian(({ plugins, app, obsidian }) => ({
+        settings: plugins.autoCorrect.settings, active: plugins.autoCorrect.runtime.active,
+        status: (plugins.autoCorrect as unknown as { statusText: string }).statusText,
+        key: (window as unknown as { lastDiagnosticKey: unknown }).lastDiagnosticKey,
+        text: app.workspace.getActiveViewOfType(obsidian.MarkdownView)!.editor.getValue(),
+      })));
+      throw error;
+    }
   });
 
   it('corrects in a pop-out window using that window’s bridge', async () => {
     const main = await browser.getWindowHandle();
     const previous = await browser.getWindowHandles();
     await browser.executeObsidian(async ({ app, obsidian }) => {
-      const file = app.vault.getAbstractFileByPath('Test.md');
+      const file = await app.vault.create('Popout.md', '');
       if (!(file instanceof obsidian.TFile)) throw new Error('Missing test note');
-      await app.workspace.getLeaf('window').openFile(file);
+      const leaf = app.workspace.getLeaf('window');
+      await leaf.openFile(file);
+      app.workspace.setActiveLeaf(leaf, { focus: true });
     });
     await browser.waitUntil(async () => (await browser.getWindowHandles()).length > previous.length, { timeout: 15000 });
     const popout = (await browser.getWindowHandles()).find(handle => !previous.includes(handle))!;
     await browser.switchToWindow(popout);
     try {
       await browser.executeObsidian(({ app, obsidian }) => {
-        const editor = app.workspace.getActiveViewOfType(obsidian.MarkdownView)!.editor;
-        editor.setValue(''); editor.focus();
+        app.workspace.iterateAllLeaves(leaf => {
+          if (leaf.view instanceof obsidian.MarkdownView && leaf.view.containerEl.ownerDocument === document) {
+            app.workspace.setActiveLeaf(leaf, { focus: true });
+            leaf.view.editor.setValue(''); leaf.view.editor.focus();
+          }
+        });
       });
       await browser.keys(typo); await browser.keys(' '); await expectText(`${suggestion} `);
     } finally {

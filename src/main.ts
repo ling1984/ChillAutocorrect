@@ -1,10 +1,13 @@
 import { Plugin, PluginSettingTab, Setting } from 'obsidian';
 import { autoCorrectExtension, type Runtime } from './extension';
 import { DEFAULT_SETTINGS, loadSettings, normalizePunctuation, type Settings } from './settings';
+import { NativeSpellchecker } from './native-spellchecker';
+import { electronSpellchecker } from './spellcheck';
 
 export default class AutoCorrectPlugin extends Plugin {
   settings: Settings = { ...DEFAULT_SETTINGS };
   runtime!: Runtime;
+  nativeSpellchecker!: NativeSpellchecker;
   private statusText = 'Native spellcheck will be checked on the next trigger.';
   private statusEl?: HTMLElement;
 
@@ -14,11 +17,14 @@ export default class AutoCorrectPlugin extends Plugin {
       settings: this.settings, generation: 0, active: true,
       status: message => { this.statusText = message; if (this.statusEl) this.statusEl.textContent = message; },
     };
-    this.registerEditorExtension(autoCorrectExtension(this.runtime));
+    this.nativeSpellchecker = new NativeSpellchecker();
+    void this.nativeSpellchecker.start().then(() => this.runtime.status('Native OS spellcheck ready.'),
+      error => this.runtime.status(`Autocorrect paused: ${error.message} Will retry on the next trigger.`));
+    this.registerEditorExtension(autoCorrectExtension(this.runtime, win => electronSpellchecker(win, this.nativeSpellchecker)));
     this.addSettingTab(new AutoCorrectSettings(this));
   }
 
-  onunload() { this.runtime.active = false; this.runtime.generation++; this.statusEl = undefined; }
+  onunload() { this.runtime.active = false; this.runtime.generation++; this.nativeSpellchecker?.stop(); this.statusEl = undefined; }
 
   async updateSettings(patch: Partial<Settings>) {
     this.settings = loadSettings({ ...this.settings, ...patch });

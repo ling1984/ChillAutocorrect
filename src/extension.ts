@@ -51,23 +51,32 @@ export function autoCorrectExtension(runtime: Runtime, factory: (win: Window) =>
 
     update(update: ViewUpdate) {
       // Viewport measurements and layout updates are not user actions.
-      if (!update.transactions.length) return;
+      if (!update.docChanged && !update.selectionSet && !update.transactions.some(tr => tr.reconfigured)) return;
       const pending = this.pending;
       this.pending = null;
       this.restore = null;
       this.serial++;
       if (!pending || update.startState !== pending.state || !update.docChanged ||
-        update.transactions.some(tr => tr.annotation(autoCorrection) || !tr.isUserEvent('input')) ||
+        update.transactions.some(tr => tr.annotation(autoCorrection) || !(tr.isUserEvent('input') || (pending.key === 'Tab' && tr.isUserEvent('indent')))) ||
         update.state.selection.ranges.length !== 1 || !update.state.selection.main.empty) return;
       let insertion: string | null = null;
       let count = 0;
+      let validTab = true;
       update.changes.iterChanges((from, to, _fromB, _toB, text) => {
         count++;
         if (from === pending.word.to && to === from) insertion = text.toString();
+        if (from !== to || (from > pending.word.from && from !== pending.word.to) || !/^[\t ]+$/u.test(text.toString())) validTab = false;
       });
       const expected = pending.key === 'Enter' ? '\n' : pending.key === 'Tab' ? '\t' : pending.key;
       // Enter may also insert list prefixes; Tab may insert spaces.
-      if (count !== 1 || insertion === null || !(pending.key === 'Tab' ? /^[\t ]+$/u.test(insertion) : (insertion as string).startsWith(expected))) return;
+      if (pending.key === 'Tab') {
+        if (count === 0 || !validTab) return;
+        pending.word = {
+          ...pending.word,
+          from: update.changes.mapPos(pending.word.from, 1), to: update.changes.mapPos(pending.word.to, -1),
+        };
+        if (update.state.doc.sliceString(pending.word.from, pending.word.to) !== pending.word.text) return;
+      } else if (count !== 1 || insertion === null || !(insertion as string).startsWith(expected)) return;
       const state = update.state;
       const serial = this.serial;
       void this.correct(pending, state, serial);
@@ -79,7 +88,7 @@ export function autoCorrectExtension(runtime: Runtime, factory: (win: Window) =>
         if (!win) return;
         const correction = await firstCorrection(pending.word.text, factory(win));
         if (this.destroyed || this.serial !== serial || !runtime.active || runtime.generation !== pending.generation ||
-          !runtime.settings.enabled || this.view.state !== state || !this.view.hasFocus) return;
+          !runtime.settings.enabled || this.view.state.doc !== state.doc || !this.view.state.selection.eq(state.selection) || !this.view.hasFocus) return;
         runtime.status('Native spellcheck ready.');
         if (!correction) return;
         this.view.dispatch({
