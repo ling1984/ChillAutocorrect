@@ -5,6 +5,13 @@ import { MACOS_HELPER, WINDOWS_HELPER } from './native-scripts';
 
 export interface NativeResult { misspelled: boolean; suggestions: string[] }
 export interface NativeChecker { check(word: string, languages: string[]): Promise<NativeResult> }
+export interface NativeDiagnostics {
+  platform: string;
+  stages: string[];
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+}
 
 export function helperCommand(platform: string) {
   if (platform === 'win32') return {
@@ -20,9 +27,14 @@ export class NativeSpellchecker implements NativeChecker {
   private ready?: Promise<void>;
   private closed = false;
   private id = 0;
+  private diagnostic: NativeDiagnostics;
   private requests = new Map<number, { resolve(value: NativeResult): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
 
-  constructor(private readonly platform = process.platform, private readonly launch: typeof spawn = spawn) {}
+  constructor(private readonly platform = process.platform, private readonly launch: typeof spawn = spawn) {
+    this.diagnostic = { platform, stages: [], stderr: '', exitCode: null, signal: null };
+  }
+
+  diagnostics(): NativeDiagnostics { return { ...this.diagnostic, stages: [...this.diagnostic.stages] }; }
 
   async start(): Promise<void> {
     if (this.closed) return Promise.reject(new Error('Native spellchecker is closed.'));
@@ -30,9 +42,11 @@ export class NativeSpellchecker implements NativeChecker {
     const { executable, args } = helperCommand(this.platform);
     const child = this.launch(executable, args, { windowsHide: true, stdio: 'pipe' }) as ChildProcessWithoutNullStreams;
     this.child = child;
+    this.diagnostic = { platform: this.platform, stages: [], stderr: '', exitCode: null, signal: null };
     this.ready = new Promise<void>((resolve, reject) => {
       let buffer = '';
       let stderr = '';
+      let stderrBuffer = '';
       const startupTimer = setTimeout(() => fail(new Error('Native spellchecker startup timed out.')), 15000);
       const fail = (error: Error) => {
         clearTimeout(startupTimer);
@@ -45,10 +59,32 @@ export class NativeSpellchecker implements NativeChecker {
         child.kill();
       };
       child.on('error', error => fail(new Error(`Could not start native spellchecker: ${error.message}`)));
-      child.on('exit', () => fail(new Error(`Native spellchecker exited.${stderr ? ` ${stderr.trim().slice(0, 400)}` : ''}`)));
+      // 'close' follows the final stderr data; 'exit' can precede the crash header.
+      child.on('close', (code: number | null, signal: string | null) => {
+        if (this.child !== child) return;
+        this.diagnostic.exitCode = code;
+        this.diagnostic.signal = signal;
+        const lastStage = this.diagnostic.stages.at(-1);
+        const header = stderr.split('\n').filter(line => !line.includes('AUTO_CORRECT_STAGE:')).join('\n').trim().slice(0, 4000);
+        fail(new Error(`Native spellchecker exited (code=${code}, signal=${signal ?? 'none'}${lastStage ? `, stage=${lastStage}` : ''}).${header ? ` ${header}` : ''}`));
+      });
       child.stdin.on('error', error => fail(error));
       child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (data: string) => { stderr = (stderr + data).slice(-2000); });
+      child.stderr.on('data', (data: string) => {
+        if (this.child !== child) return;
+        // Preserve the exception header as well as the tail of a long crash dump.
+        stderr += data;
+        if (stderr.length > 65536) stderr = stderr.slice(0, 32768) + '\n[stderr truncated]\n' + stderr.slice(-32768);
+        this.diagnostic.stderr = stderr;
+        stderrBuffer += data;
+        let newline: number;
+        while ((newline = stderrBuffer.indexOf('\n')) !== -1) {
+          const line = stderrBuffer.slice(0, newline); stderrBuffer = stderrBuffer.slice(newline + 1);
+          const marker = line.match(/AUTO_CORRECT_STAGE:([a-z.]+)/u)?.[1];
+          if (marker) this.diagnostic.stages = [...this.diagnostic.stages.slice(-63), marker];
+        }
+        if (stderrBuffer.length > 65536) stderrBuffer = stderrBuffer.slice(-1024);
+      });
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
         buffer += chunk;

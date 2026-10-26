@@ -347,13 +347,20 @@ while ($null -ne ($line = [Console]::ReadLine())) {
 }
 `;
 var MACOS_HELPER = String.raw`
+function stage(name) { console.log('AUTO_CORRECT_STAGE:' + name); }
+stage('foundation.import');
 ObjC.import('Foundation');
+stage('appkit.import');
 ObjC.import('AppKit');
+stage('stdio.open');
 const input = $.NSFileHandle.fileHandleWithStandardInput;
 const output = $.NSFileHandle.fileHandleWithStandardOutput;
+const newline = $('\n').dataUsingEncoding($.NSUTF8StringEncoding);
+stage('spellchecker.create');
 const checker = $.NSSpellChecker.sharedSpellChecker;
 const tag = $.NSSpellChecker.uniqueSpellDocumentTag;
 checker.automaticallyIdentifiesLanguages = true;
+stage('spellchecker.ready');
 function write(value) {
     output.writeData($(JSON.stringify(value) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
 }
@@ -362,29 +369,40 @@ function readLine() {
     while (true) {
         const byte = input.readDataOfLength(1);
         if (byte.length === 0) return null;
-        if (ObjC.unwrap($.NSString.alloc.initWithDataEncoding(byte, $.NSUTF8StringEncoding)) === '\n') {
+        // Compare raw bytes: an individual UTF-8 byte may not be a valid NSString.
+        if (byte.isEqualToData(newline)) {
+            stage('input.decode');
             return ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding));
         }
         data.appendData(byte);
     }
 }
 write({ready: true});
+stage('ready.sent');
 while (true) {
     let request;
-    const pool = $.NSAutoreleasePool.alloc.init;
+    // JXA owns its bridged objects. Draining a manually created pool can
+    // invalidate wrappers that JavaScriptCore still references on the next loop.
     try {
+        stage('input.wait');
         const line = readLine();
         if (line === null) break;
+        stage('request.parse');
         request = JSON.parse(line);
         const text = $(request.word);
+        stage('spelling.check');
         const range = checker.checkSpellingOfStringStartingAtLanguageWrapInSpellDocumentWithTagWordCount(text, 0, null, false, tag, null);
         const misspelled = range.length > 0;
+        stage('spelling.suggest');
         const guesses = misspelled ? checker.guessesForWordRangeInStringLanguageInSpellDocumentWithTag(range, text, null, tag) : null;
+        stage('response.write');
         write({ id: request.id, misspelled: misspelled, suggestions: guesses ? ObjC.deepUnwrap(guesses) : [] });
+        stage('request.complete');
     } catch (error) {
         write({ id: request ? request.id : null, error: String(error) });
-    } finally { pool.drain; }
+    }
 }
+stage('shutdown');
 checker.closeSpellDocumentWithTag(tag);
 `;
 
@@ -401,6 +419,7 @@ var NativeSpellchecker = class {
   constructor(platform = process.platform, launch = import_node_child_process.spawn) {
     this.platform = platform;
     this.launch = launch;
+    this.diagnostic = { platform, stages: [], stderr: "", exitCode: null, signal: null };
   }
   platform;
   launch;
@@ -408,16 +427,22 @@ var NativeSpellchecker = class {
   ready;
   closed = false;
   id = 0;
+  diagnostic;
   requests = /* @__PURE__ */ new Map();
+  diagnostics() {
+    return { ...this.diagnostic, stages: [...this.diagnostic.stages] };
+  }
   async start() {
     if (this.closed) return Promise.reject(new Error("Native spellchecker is closed."));
     if (this.ready) return this.ready;
     const { executable, args } = helperCommand(this.platform);
     const child = this.launch(executable, args, { windowsHide: true, stdio: "pipe" });
     this.child = child;
+    this.diagnostic = { platform: this.platform, stages: [], stderr: "", exitCode: null, signal: null };
     this.ready = new Promise((resolve, reject) => {
       let buffer = "";
       let stderr = "";
+      let stderrBuffer = "";
       const startupTimer = setTimeout(() => fail(new Error("Native spellchecker startup timed out.")), 15e3);
       const fail = (error) => {
         clearTimeout(startupTimer);
@@ -433,11 +458,30 @@ var NativeSpellchecker = class {
         child.kill();
       };
       child.on("error", (error) => fail(new Error(`Could not start native spellchecker: ${error.message}`)));
-      child.on("exit", () => fail(new Error(`Native spellchecker exited.${stderr ? ` ${stderr.trim().slice(0, 400)}` : ""}`)));
+      child.on("close", (code, signal) => {
+        if (this.child !== child) return;
+        this.diagnostic.exitCode = code;
+        this.diagnostic.signal = signal;
+        const lastStage = this.diagnostic.stages.at(-1);
+        const header = stderr.split("\n").filter((line) => !line.includes("AUTO_CORRECT_STAGE:")).join("\n").trim().slice(0, 4e3);
+        fail(new Error(`Native spellchecker exited (code=${code}, signal=${signal ?? "none"}${lastStage ? `, stage=${lastStage}` : ""}).${header ? ` ${header}` : ""}`));
+      });
       child.stdin.on("error", (error) => fail(error));
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (data) => {
-        stderr = (stderr + data).slice(-2e3);
+        if (this.child !== child) return;
+        stderr += data;
+        if (stderr.length > 65536) stderr = stderr.slice(0, 32768) + "\n[stderr truncated]\n" + stderr.slice(-32768);
+        this.diagnostic.stderr = stderr;
+        stderrBuffer += data;
+        let newline;
+        while ((newline = stderrBuffer.indexOf("\n")) !== -1) {
+          const line = stderrBuffer.slice(0, newline);
+          stderrBuffer = stderrBuffer.slice(newline + 1);
+          const marker = line.match(/AUTO_CORRECT_STAGE:([a-z.]+)/u)?.[1];
+          if (marker) this.diagnostic.stages = [...this.diagnostic.stages.slice(-63), marker];
+        }
+        if (stderrBuffer.length > 65536) stderrBuffer = stderrBuffer.slice(-1024);
       });
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {

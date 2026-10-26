@@ -27,11 +27,12 @@ The plugin uses Windows `ISpellChecker` or macOS `NSSpellChecker` through a pers
 
 - `npm run dev`: rebuild on changes.
 - `npm run check`: type checking, unit/editor tests, and production build.
+- `npm run test:native`: test the real OS helper independently of Obsidian, including repeated requests, Unicode split across writes, batched requests, and graceful EOF. macOS additionally runs isolated Objective-C bridge probes. Read `artifacts/native/REPORT.md` and the accompanying JSON files for stage traces, full crash headers, exit codes, and signals.
 - `npm run test:e2e`: run real Obsidian 1.14.4 in a copied test vault and isolated application profile using WDIO Obsidian Service. Requires network access for Obsidian, ChromeDriver and native dictionaries on first run, and an interactive desktop.
 - `npm run test:e2e -- --spec test/diagnostic/native.e2e.ts`: print a comparison of Electron’s renderer APIs, the native menu, and the direct OS helper; save the readable report to `artifacts/DIAGNOSIS.md`.
 - Set `OBSIDIAN_BINARY` and `OBSIDIAN_APP` to use an existing executable and app ASAR with the test runner. Tests still use a disposable vault/profile.
 
-GitHub Actions runs these checks on Windows and macOS. Native tests compare against the current platform’s first suggestion rather than a fixed spelling. The custom-dictionary test temporarily adds a test word and removes it in `finally`; run native tests in disposable OS accounts/CI because Electron can also update the OS dictionary. Logs and failure screenshots are saved under `artifacts/`.
+GitHub Actions runs these checks on Windows and macOS. Direct native helper tests run before Obsidian so helper crashes are isolated from editor problems. The Mac probes also record the old manual-pool pattern in a disposable subprocess as an informational control; production-helper tests must pass. Native tests compare against the current platform’s first suggestion rather than a fixed spelling. The custom-dictionary test temporarily adds a test word and removes it in `finally`; run native tests in disposable OS accounts/CI because Electron can also update the OS dictionary. Logs, native diagnostic reports, and failure screenshots are saved under `artifacts/` and uploaded by CI on every run.
 
 Passing unit tests alone does not establish native compatibility. Both platform CI jobs must pass before claiming Windows/macOS verification. Publishing to the community plugin directory is separate from this project.
 

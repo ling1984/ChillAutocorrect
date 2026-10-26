@@ -8,7 +8,7 @@ import { helperCommand, NativeSpellchecker } from '../../src/native-spellchecker
 function harness() {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
-    kill: vi.fn(() => { queueMicrotask(() => child.emit('exit', 0)); return true; }),
+    kill: vi.fn(() => { queueMicrotask(() => { child.emit('exit', 0); child.emit('close', 0, null); }); return true; }),
   });
   const launch = vi.fn(() => child);
   const client = new NativeSpellchecker('win32', launch as unknown as typeof spawn);
@@ -66,6 +66,20 @@ describe('native helper protocol', () => {
     const assertion = expect(result).rejects.toThrow('timed out');
     await vi.advanceTimersByTimeAsync(3000);
     await assertion; expect(h.child.kill).toHaveBeenCalled();
+    h.client.stop();
+  });
+  it('preserves the crash header, signal and last stage after stderr finishes', async () => {
+    const h = harness(); const result = h.client.check('word', ['en']); h.ready(); await tick();
+    const assertion = expect(result).rejects.toThrow('stage=spelling.check');
+    h.child.stderr.write('AUTO_CORRECT_STAGE:spelling.');
+    h.child.stderr.write('check\n');
+    h.child.emit('exit', null, 'SIGSEGV');
+    h.child.stderr.write('CRASH HEADER: invalid Objective-C object\n' + 'stack frame\n'.repeat(8000));
+    h.child.emit('close', null, 'SIGSEGV');
+    await assertion;
+    expect(h.client.diagnostics().stderr).toContain('CRASH HEADER');
+    expect(h.client.diagnostics().signal).toBe('SIGSEGV');
+    expect(h.client.diagnostics().stages).toEqual(['spelling.check']);
     h.client.stop();
   });
 });

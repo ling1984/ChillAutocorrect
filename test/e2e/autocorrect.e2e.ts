@@ -54,13 +54,15 @@ describe('Auto Correct in real Obsidian', () => {
     // Trigger Chromium's lazy dictionary loading with real editor input.
     await browser.keys(' ');
     try {
-      await browser.waitUntil(async () => browser.executeObsidian(async ({ require, plugins }, word) => {
+      // OS API calls are synchronous once the helper is ready. A helper crash is
+      // fatal here: retrying for a minute just hides the original crash header.
+      await browser.executeObsidian(async ({ require, plugins }, word) => {
         const session = require('electron').remote.getCurrentWebContents().session;
         const result = await plugins.autoCorrect.nativeSpellchecker.check(word, session.getSpellCheckerLanguages());
-        return result.misspelled && result.suggestions.length > 0;
-      }, typo), { timeout: 60000, interval: 500, timeoutMsg: 'Native English spellchecker did not become ready' });
+        if (!result.misspelled || result.suggestions.length === 0) throw new Error('Native English spellchecker returned no suggestions for the test typo.');
+      }, typo);
     } catch (error) {
-      const diagnostics = await browser.executeObsidian(({ require }) => {
+      const diagnostics = await browser.executeObsidian(({ require, plugins }) => {
         const electron = require('electron');
         const session = electron.remote.getCurrentWebContents().session;
         const userData = electron.remote.app.getPath('userData');
@@ -71,6 +73,7 @@ describe('Auto Correct in real Obsidian', () => {
           dictionaryFiles: require('fs').existsSync(dictionaries) ? require('fs').readdirSync(dictionaries) : [],
           editorSpellcheck: document.querySelector('.cm-content')?.getAttribute('spellcheck'),
           text: document.querySelector('.cm-content')?.textContent,
+          helper: plugins.autoCorrect.nativeSpellchecker.diagnostics(),
         };
       }).catch(() => ({ rendererDisconnected: true }));
       await fs.mkdir('artifacts', { recursive: true });

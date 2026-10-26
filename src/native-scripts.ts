@@ -82,13 +82,20 @@ while ($null -ne ($line = [Console]::ReadLine())) {
 `;
 
 export const MACOS_HELPER = String.raw`
+function stage(name) { console.log('AUTO_CORRECT_STAGE:' + name); }
+stage('foundation.import');
 ObjC.import('Foundation');
+stage('appkit.import');
 ObjC.import('AppKit');
+stage('stdio.open');
 const input = $.NSFileHandle.fileHandleWithStandardInput;
 const output = $.NSFileHandle.fileHandleWithStandardOutput;
+const newline = $('\n').dataUsingEncoding($.NSUTF8StringEncoding);
+stage('spellchecker.create');
 const checker = $.NSSpellChecker.sharedSpellChecker;
 const tag = $.NSSpellChecker.uniqueSpellDocumentTag;
 checker.automaticallyIdentifiesLanguages = true;
+stage('spellchecker.ready');
 function write(value) {
     output.writeData($(JSON.stringify(value) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
 }
@@ -97,28 +104,39 @@ function readLine() {
     while (true) {
         const byte = input.readDataOfLength(1);
         if (byte.length === 0) return null;
-        if (ObjC.unwrap($.NSString.alloc.initWithDataEncoding(byte, $.NSUTF8StringEncoding)) === '\n') {
+        // Compare raw bytes: an individual UTF-8 byte may not be a valid NSString.
+        if (byte.isEqualToData(newline)) {
+            stage('input.decode');
             return ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding));
         }
         data.appendData(byte);
     }
 }
 write({ready: true});
+stage('ready.sent');
 while (true) {
     let request;
-    const pool = $.NSAutoreleasePool.alloc.init;
+    // JXA owns its bridged objects. Draining a manually created pool can
+    // invalidate wrappers that JavaScriptCore still references on the next loop.
     try {
+        stage('input.wait');
         const line = readLine();
         if (line === null) break;
+        stage('request.parse');
         request = JSON.parse(line);
         const text = $(request.word);
+        stage('spelling.check');
         const range = checker.checkSpellingOfStringStartingAtLanguageWrapInSpellDocumentWithTagWordCount(text, 0, null, false, tag, null);
         const misspelled = range.length > 0;
+        stage('spelling.suggest');
         const guesses = misspelled ? checker.guessesForWordRangeInStringLanguageInSpellDocumentWithTag(range, text, null, tag) : null;
+        stage('response.write');
         write({ id: request.id, misspelled: misspelled, suggestions: guesses ? ObjC.deepUnwrap(guesses) : [] });
+        stage('request.complete');
     } catch (error) {
         write({ id: request ? request.id : null, error: String(error) });
-    } finally { pool.drain; }
+    }
 }
+stage('shutdown');
 checker.closeSpellDocumentWithTag(tag);
 `;

@@ -8,6 +8,7 @@
     "dev": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:native": "vitest run --config vitest.native.config.mts",
     "test:e2e": "npm run build && wdio run wdio.conf.mts",
     "check": "npm run typecheck && npm test && npm run build"
   },

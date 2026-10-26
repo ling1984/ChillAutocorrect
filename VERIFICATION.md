@@ -16,7 +16,8 @@ The plugin now calls the OS directly in a hidden background helper. It still rea
 ## Automated verification
 
 - Type checking and production build pass.
-- 73 unit/editor/protocol tests pass.
+- 74 unit/editor/protocol tests pass.
+- Three standalone native-helper tests pass on Windows, including repeated Unicode requests and split UTF-8 input. Mac-only probes are skipped on Windows.
 - All 19 Windows tests pass in real Obsidian: Source and Live Preview, Space/Enter/Tab/punctuation, cursor positioning, Undo, Backspace restoration, Markdown exclusions, link labels, native custom-dictionary additions/removals, settings persistence, reload, and pop-out windows.
 - macOS uses an implemented `NSSpellChecker` helper. Its native execution is **not verified on this Windows machine**. The macOS GitHub Actions job is required before claiming Mac compatibility.
 
@@ -25,6 +26,7 @@ The plugin now calls the OS directly in a hidden background helper. It still rea
 ```sh
 npm ci
 npm run check
+npm run test:native
 npm run test:e2e
 npm run test:e2e -- --spec test/diagnostic/native.e2e.ts
 ```
@@ -32,3 +34,5 @@ npm run test:e2e -- --spec test/diagnostic/native.e2e.ts
 The last command prints the API comparison and writes `artifacts/DIAGNOSIS.md`. Native tests use a disposable vault/profile; dictionary tests also briefly add and remove an OS dictionary entry, so CI/disposable OS accounts are recommended.
 
 After rebuilding, copy `main.js` and `manifest.json` to your vault’s `.obsidian/plugins/auto-correct/` directory and reload the plugin.
+
+The reported Mac JXA crash has a candidate fix and a staged CI diagnostic suite. See [MACOS-DIAGNOSIS.md](MACOS-DIAGNOSIS.md); the fix still requires a successful Mac run.
