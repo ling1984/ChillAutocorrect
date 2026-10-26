@@ -346,6 +346,18 @@ while ($null -ne ($line = [Console]::ReadLine())) {
     [Console]::WriteLine((ConvertTo-Json -InputObject $response -Compress -Depth 4))
 }
 `;
+var MACOS_SPELLING = String.raw`
+function checkNativeWord(word) {
+    const text = $(word);
+    stage('spelling.check');
+    const range = checker.checkSpellingOfStringStartingAtLanguageWrapInSpellDocumentWithTagWordCount(text, 0, $(), false, tag, Ref());
+    const misspelled = Number(range.length) > 0;
+    stage('spelling.suggest');
+    const guesses = misspelled ? checker.guessesForWordRangeInStringLanguageInSpellDocumentWithTag(range, text, $(), tag) : undefined;
+    const suggestions = guesses ? ObjC.deepUnwrap(guesses) : [];
+    return { misspelled: misspelled, suggestions: Array.isArray(suggestions) ? suggestions : [] };
+}
+`;
 var MACOS_HELPER = String.raw`
 function stage(name) { console.log('AUTO_CORRECT_STAGE:' + name); }
 stage('foundation.import');
@@ -368,7 +380,7 @@ function readLine() {
     const data = $.NSMutableData.data;
     while (true) {
         const byte = input.readDataOfLength(1);
-        if (byte.length === 0) return null;
+        if (Number(byte.length) === 0) { stage('input.eof'); return null; }
         // Compare raw bytes: an individual UTF-8 byte may not be a valid NSString.
         if (byte.isEqualToData(newline)) {
             stage('input.decode');
@@ -379,24 +391,22 @@ function readLine() {
 }
 write({ready: true});
 stage('ready.sent');
+${MACOS_SPELLING}
 while (true) {
+    // Transport errors are fatal, not per-word errors: retrying a broken read
+    // forever hides the original failure and prevents EOF/shutdown diagnostics.
+    stage('input.wait');
+    const line = readLine();
+    if (line === null) break;
     let request;
     // JXA owns its bridged objects. Draining a manually created pool can
     // invalidate wrappers that JavaScriptCore still references on the next loop.
     try {
-        stage('input.wait');
-        const line = readLine();
-        if (line === null) break;
         stage('request.parse');
         request = JSON.parse(line);
-        const text = $(request.word);
-        stage('spelling.check');
-        const range = checker.checkSpellingOfStringStartingAtLanguageWrapInSpellDocumentWithTagWordCount(text, 0, null, false, tag, null);
-        const misspelled = range.length > 0;
-        stage('spelling.suggest');
-        const guesses = misspelled ? checker.guessesForWordRangeInStringLanguageInSpellDocumentWithTag(range, text, null, tag) : null;
+        const result = checkNativeWord(request.word);
         stage('response.write');
-        write({ id: request.id, misspelled: misspelled, suggestions: guesses ? ObjC.deepUnwrap(guesses) : [] });
+        write({ id: request.id, misspelled: result.misspelled, suggestions: result.suggestions });
         stage('request.complete');
     } catch (error) {
         write({ id: request ? request.id : null, error: String(error) });
@@ -404,6 +414,7 @@ while (true) {
 }
 stage('shutdown');
 checker.closeSpellDocumentWithTag(tag);
+stage('shutdown.complete');
 `;
 
 // src/native-spellchecker.ts

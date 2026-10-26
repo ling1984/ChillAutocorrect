@@ -55,7 +55,7 @@ describe.skipIf(!supported)('real OS spellchecker without Obsidian', () => {
     const command = helperCommand(process.platform);
     const child = spawn(command.executable, command.args, { windowsHide: true, stdio: 'pipe' });
     let stdout = ''; let stderr = ''; let buffer = '';
-    const messages: { id?: number; ready?: boolean; misspelled?: boolean; suggestions?: string[] }[] = [];
+    const messages: { id?: number; ready?: boolean; misspelled?: boolean; suggestions?: string[]; error?: string }[] = [];
     let readyResolve!: () => void;
     let readyReject!: (error: Error) => void;
     const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -74,6 +74,10 @@ describe.skipIf(!supported)('real OS spellchecker without Obsidian', () => {
           try {
             const message = JSON.parse(line); messages.push(message);
             if (message.ready) readyResolve();
+            if (typeof message.error === 'string') {
+              const error = new Error(`Native request ${message.id ?? 'unknown'} failed: ${message.error}`);
+              readyReject(error); reject(error); child.kill();
+            }
           } catch { reject(new Error(`Invalid helper output: ${line}`)); child.kill(); }
         }
       });

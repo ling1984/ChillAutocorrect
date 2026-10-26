@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
+import { MACOS_SPELLING } from '../../src/native-scripts';
 
 const exec = promisify(execFile);
 const output: unknown[] = [];
@@ -47,14 +48,15 @@ JSON.stringify({ready:true});`);
     expect(result.ready).toBe(true);
   });
   it('checks NSRange and suggestion bridging without any manual pool', async () => {
-    const result = await probe('native-selectors', `${appkit}
-stage('spelling.check'); const range = checker.checkSpellingOfStringStartingAtLanguageWrapInSpellDocumentWithTagWordCount($('typograpy'), 0, null, false, tag, null);
-stage('spelling.suggest'); const guesses = checker.guessesForWordRangeInStringLanguageInSpellDocumentWithTag(range, $('typograpy'), null, tag);
-stage('suggestions.unwrap'); JSON.stringify({length:range.length, guesses:ObjC.deepUnwrap(guesses)});`);
-    expect(result.length).toBeGreaterThan(0);
-    expect(result.guesses.length).toBeGreaterThan(0);
+    const result = await probe('native-selectors', `${appkit}\n${MACOS_SPELLING}
+const correct = checkNativeWord('hello');
+const typo = checkNativeWord('typograpy');
+stage('suggestions.unwrap'); JSON.stringify({correct:correct, typo:typo});`);
+    expect(result.correct).toEqual({ misspelled: false, suggestions: [] });
+    expect(result.typo.misspelled).toBe(true);
+    expect(result.typo.suggestions.length).toBeGreaterThan(0);
   });
-  it('records the old manual-pool pattern in a disposable subprocess', async () => {
+  it.skipIf(process.env.AUTO_CORRECT_LEGACY_PROBE !== '1')('records the old manual-pool pattern in a disposable subprocess', async () => {
     // Informational control: OS/JXA versions differ; a crash here must not
     // prevent the corrected helper and isolated stages from being tested.
     await probe('legacy-manual-pool-control', `${appkit}

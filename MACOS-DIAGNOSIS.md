@@ -1,14 +1,22 @@
 # macOS helper crash: changes and diagnostic tests
 
-The supplied GitHub Actions log confirms an `osascript` / JavaScriptCore native crash, rather than a normal spelling exception. The previous error handling retained only the end of stderr, discarding the exception header and any evidence of which bridge operation failed. The Obsidian setup hook then repeatedly relaunched the crashing helper for a minute.
+The first GitHub Actions log showed an `osascript` / JavaScriptCore crash with its header discarded. The subsequent staged Mac run established two distinct failures:
+
+1. The legacy control crashes at `legacy.pool.create` with `-[NSAutoreleasePool retain]: Cannot retain an autorelease pool`. Removing manual pool management fixes this original failure.
+2. The corrected helper reaches `spelling.check` but throws `-[NSNull isEqualToString:]`. JavaScript `null` was being bridged to an `NSNull` object in the language parameter, where `NSSpellChecker` expects Objective-C `nil` or an NSString.
+
+Foundation Unicode round-tripping and AppKit initialization both passed on the Mac runner. The remaining observed failure is in argument bridging, not helper startup or dictionary downloads.
 
 ## Corrections
 
-- Removed manual `NSAutoreleasePool` creation and draining from JXA. Draining a pool can invalidate Objective-C objects still referenced by JavaScript wrappers. This is a suspected cause of the reported bridge crash; the truncated stack alone cannot prove the failing operation.
+- Removed manual `NSAutoreleasePool` creation and draining from JXA; its creation is now a confirmed cause of the original crash.
+- Pass JXA `$()` (Objective-C nil) for the language in both spelling and suggestion calls, and `Ref()` for the `NSInteger* wordCount` output. JavaScript null is not used as a native argument.
+- Share the production spelling function with the isolated native-selector probe. Four cross-platform regression tests execute that function against a strict bridge contract, including a reproduction of the reported NSNull exception with the old argument.
 - Read UTF-8 input as raw data until a newline, then decode the complete line. The previous reader tried to decode each individual byte as UTF-8, which can produce nil strings for accented or non-Latin words.
 - Record non-sensitive stage markers before imports, startup, input decoding, native spelling, suggestions, and response writing.
 - Wait for the subprocess `close` event before reporting a crash, preserving the final stderr, exception header, exit code, signal, and last stage. Diagnostic reports retain up to 64 KiB of stderr.
 - Fail Obsidian setup immediately on a helper crash, and include helper diagnostics in `artifacts/native-spellcheck.json`.
+- Stop treating transport read errors as per-word errors, record explicit EOF and shutdown-complete markers, and make raw-protocol tests fail immediately on a native error response rather than waiting 20 seconds.
 
 ## Mac CI tests
 
@@ -19,7 +27,7 @@ Run `npm run test:native` on macOS. This runs before the Obsidian suite in GitHu
 | Foundation Unicode probe | Import / string-data conversion failure |
 | AppKit startup probe | Spellchecker initialization failure |
 | Native selectors probe | Spelling, NSRange, or suggestion-array bridging failure |
-| Legacy manual-pool control | Records whether the old lifetime pattern crashes on this OS/JXA version; informational only |
+| Legacy manual-pool control (opt-in) | Original pool crash is confirmed; set `AUTO_CORRECT_LEGACY_PROBE=1` to reproduce it in a disposable subprocess |
 | Standalone startup and native check | Real production helper failure without Electron involved |
 | 71 requests through one helper | Object lifetime or repeated-request failure |
 | Split UTF-8, batched requests, EOF | Stream decoding, framing, and shutdown failure |
@@ -30,4 +38,4 @@ For example, `stage=spelling.check` indicates that input decoding completed but 
 
 ## Verification boundary
 
-These changes can be built and regression-tested on Windows. A successful Mac Actions run is still required to confirm that they resolve the supplied Mac crash. No local Mac execution is available in this workspace.
+The supplied Mac output confirms both causes above. The revised arguments and stream handling can be built and regression-tested on Windows, but a successful Mac Actions run is still required to verify the final helper end to end. No local Mac execution is available in this workspace.
