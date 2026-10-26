@@ -39,3 +39,11 @@ For example, `stage=spelling.check` indicates that input decoding completed but 
 ## Verification boundary
 
 The supplied Mac output confirms both causes above. The revised arguments and stream handling can be built and regression-tested on Windows, but a successful Mac Actions run is still required to verify the final helper end to end. No local Mac execution is available in this workspace.
+
+## Latest Mac editor run: 18 of 19 tests passed
+
+After the native-argument fix, the supplied Mac run passes Source mode, Live Preview, Undo, Backspace, every configured trigger, Markdown exclusions, link labels, reload and pop-out windows. Its remaining failure occurs before any dictionary mutation: the test hard-coded `speling` and assumed that the native engine would return a suggestion. That first suggestion was absent on the Mac runner.
+
+The dictionary test now selects an unsaved word that the current OS demonstrably marks as misspelled and provides a usable suggestion for. It proves correction before adding the word, verifies the session dictionary contains the learned word and the editor preserves it, then removes it and requires correction to resume using the current native first suggestion. It runs last to isolate OS dictionary propagation from the other editor tests.
+
+Candidate observations and the selected fixture are saved in `artifacts/native/dictionary-fixture.json`. If no candidate is usable, the test fails with all observations rather than skipping dictionary verification. The revised dictionary test still needs a Mac run.

@@ -156,34 +156,6 @@ describe('Auto Correct in real Obsidian', () => {
     await browser.keys(' '); await expectText(`[${suggestion} ](https://example.com)`);
   });
 
-  it('respects additions and removals in the actual session dictionary', async () => {
-    // Use a different word so OS dictionary propagation cannot affect later tests.
-    const dictionaryTypo = 'speling';
-    const dictionarySuggestion = await browser.executeObsidian(async ({ require, plugins }, word) => {
-      const languages = require('electron').remote.getCurrentWebContents().session.getSpellCheckerLanguages();
-      return (await plugins.autoCorrect.nativeSpellchecker.check(word, languages)).suggestions[0];
-    }, dictionaryTypo);
-    expect(dictionarySuggestion).toBeTruthy();
-    const alreadySaved = await browser.executeObsidian(async ({ require }, word) => {
-      const session = require('electron').remote.getCurrentWebContents().session;
-      return (await session.listWordsInSpellCheckerDictionary()).includes(word);
-    }, dictionaryTypo);
-    expect(alreadySaved).toBe(false);
-    try {
-      const added = await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.addWordToSpellCheckerDictionary(word), dictionaryTypo);
-      expect(added).toBe(true);
-      await openText(dictionaryTypo); await browser.keys(' '); await expectText(`${dictionaryTypo} `);
-      await browser.pause(200); expect(await documentText()).toBe(`${dictionaryTypo} `);
-    } finally {
-      if (!alreadySaved) await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.removeWordFromSpellCheckerDictionary(word), dictionaryTypo);
-    }
-    await browser.waitUntil(async () => browser.executeObsidian(async ({ require, plugins }, word) => {
-      const languages = require('electron').remote.getCurrentWebContents().session.getSpellCheckerLanguages();
-      return (await plugins.autoCorrect.nativeSpellchecker.check(word, languages)).misspelled;
-    }, dictionaryTypo), { timeout: 8000 });
-    await openText(dictionaryTypo); await browser.keys(' '); await expectText(`${dictionarySuggestion} `);
-  });
-
   it('persists settings and removes its handlers on unload', async () => {
     await settings({ punctuation: '!', space: false });
     await obsidianPage.disablePlugin('auto-correct');
@@ -237,5 +209,64 @@ describe('Auto Correct in real Obsidian', () => {
     } finally {
       await browser.closeWindow(); await browser.switchToWindow(main);
     }
+  });
+
+  // Last: changes to OS dictionaries can propagate between helper processes.
+  // Avoid letting learn/unlearn activity influence reload and pop-out tests.
+  it('respects additions and removals in the actual session dictionary', async () => {
+    const fixture = await browser.executeObsidian(async ({ require, plugins }, candidates) => {
+      const session = require('electron').remote.getCurrentWebContents().session;
+      const languages = session.getSpellCheckerLanguages();
+      const saved = new Set((await session.listWordsInSpellCheckerDictionary()).map((word: string) => word.normalize('NFC').toLowerCase()));
+      const observations = [];
+      for (const word of candidates) {
+        if (saved.has(word.normalize('NFC').toLowerCase())) { observations.push({ word, saved: true }); continue; }
+        const result = await plugins.autoCorrect.nativeSpellchecker.check(word, languages);
+        observations.push({ word, ...result });
+        const suggestion = result.suggestions[0];
+        if (result.misspelled && typeof suggestion === 'string' && suggestion.length > 0 && suggestion !== word && !/[\r\n]/u.test(suggestion)) {
+          return { selected: { word, suggestion }, observations };
+        }
+      }
+      return { selected: null, observations };
+    }, ['speling', 'recieve', 'definately', 'acommodate', 'occurence', 'mispeling', typo]);
+    await fs.mkdir('artifacts/native', { recursive: true });
+    await fs.writeFile('artifacts/native/dictionary-fixture.json', JSON.stringify(fixture, null, 2));
+    if (!fixture.selected) throw new Error(`Native spellchecker provided no usable dictionary-test candidate: ${JSON.stringify(fixture.observations)}`);
+    const { word, suggestion: beforeSuggestion } = fixture.selected;
+    console.log(`Dictionary test fixture: ${word} -> ${beforeSuggestion}`);
+
+    // Prove actual correction works before learning the test word. Absence of a
+    // suggestion can never masquerade as successful dictionary protection.
+    await openText(word); await browser.keys(' '); await expectText(`${beforeSuggestion} `);
+    let added = false;
+    try {
+      added = await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.addWordToSpellCheckerDictionary(word) as boolean, word);
+      expect(added).toBe(true);
+      await browser.waitUntil(async () => browser.executeObsidian(async ({ require }, word) => {
+        return (await require('electron').remote.getCurrentWebContents().session.listWordsInSpellCheckerDictionary()).includes(word);
+      }, word), { timeout: 8000, timeoutMsg: 'Learned test word never appeared in the session dictionary' });
+      await openText(word); await browser.keys(' '); await expectText(`${word} `);
+      await browser.pause(200); expect(await documentText()).toBe(`${word} `);
+    } finally {
+      if (added) {
+        const removed = await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.removeWordFromSpellCheckerDictionary(word), word);
+        expect(removed).toBe(true);
+      }
+    }
+    let afterSuggestion = '';
+    await browser.waitUntil(async () => {
+      const result = await browser.executeObsidian(async ({ require, plugins }, word) => {
+        const session = require('electron').remote.getCurrentWebContents().session;
+        if ((await session.listWordsInSpellCheckerDictionary()).includes(word)) return null;
+        return plugins.autoCorrect.nativeSpellchecker.check(word, session.getSpellCheckerLanguages());
+      }, word);
+      const first = result?.suggestions[0];
+      if (!result?.misspelled || typeof first !== 'string' || !first || first === word || /[\r\n]/u.test(first)) return false;
+      afterSuggestion = first;
+      return true;
+    }, { timeout: 10000, timeoutMsg: 'Removed word did not become correctable again' });
+    // OS learn/unlearn may reorder suggestions; use the current first result.
+    await openText(word); await browser.keys(' '); await expectText(`${afterSuggestion} `);
   });
 });

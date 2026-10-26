@@ -35,4 +35,4 @@ The last command prints the API comparison and writes `artifacts/DIAGNOSIS.md`. 
 
 After rebuilding, copy `main.js` and `manifest.json` to your vault’s `.obsidian/plugins/auto-correct/` directory and reload the plugin.
 
-Mac CI diagnostics confirmed an invalid manual autorelease pool and JavaScript-null/Objective-C-nil argument confusion. Both have been patched. See [MACOS-DIAGNOSIS.md](MACOS-DIAGNOSIS.md); the revised helper still requires a successful Mac run.
+Mac CI diagnostics confirmed an invalid manual autorelease pool and JavaScript-null/Objective-C-nil argument confusion. Both have been patched. The subsequent user-supplied Mac run passes 18 of 19 editor tests; the last failure was a hard-coded dictionary-test word with no native suggestion. The test now selects a proven, platform-specific fixture and still requires learn/protect/unlearn behavior. See [MACOS-DIAGNOSIS.md](MACOS-DIAGNOSIS.md); the revised dictionary test still needs a Mac run.
