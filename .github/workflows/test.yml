@@ -1,0 +1,31 @@
+name: Verify plugin
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-failures-${{ matrix.os }}
+          path: artifacts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: auto-correct-${{ matrix.os }}
+          path: |
+            main.js
+            manifest.json
+            versions.json

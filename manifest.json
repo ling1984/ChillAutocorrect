@@ -1,0 +1,9 @@
+{
+  "id": "auto-correct",
+  "name": "Auto Correct",
+  "version": "0.1.0",
+  "minAppVersion": "1.14.4",
+  "description": "Correct completed words using native spelling suggestions and your Obsidian dictionary.",
+  "author": "Auto Correct contributors",
+  "isDesktopOnly": true
+}

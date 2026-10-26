@@ -1,0 +1,36 @@
+{
+  "name": "obsidian-auto-correct",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native, dictionary-aware autocorrect for Obsidian desktop",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "npm run build && wdio run wdio.conf.mts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.5",
+    "@lezer/markdown": "^1.8.1",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^26.6.5",
+    "@wdio/cli": "^9.32.0",
+    "@wdio/globals": "^9.31.3",
+    "@wdio/local-runner": "^9.32.0",
+    "@wdio/mocha-framework": "^9.32.0",
+    "esbuild": "^0.28.2",
+    "jsdom": "^29.1.1",
+    "obsidian": "^1.14.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "wdio-obsidian-reporter": "^3.3.0",
+    "wdio-obsidian-service": "^3.3.0"
+  }
+}
