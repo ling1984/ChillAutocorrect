@@ -35,6 +35,18 @@ const checker = (overrides: Partial<Spellchecker> = {}): Spellchecker => ({
 });
 
 describe('native suggestions', () => {
+  it('uses native OS results even when webFrame incorrectly says the word is correct', async () => {
+    expect(await firstCorrection('typo', checker({ isMisspelled: () => false, suggestions: () => [],
+      check: async () => ({ misspelled: true, suggestions: ['native-first', 'native-second'] }),
+    }))).toBe('native-first');
+  });
+  it('checks the Obsidian dictionary before sending a word to the OS helper', async () => {
+    let called = false;
+    expect(await firstCorrection('saved', checker({ dictionary: async () => ['SAVED'],
+      check: async () => { called = true; return { misspelled: true, suggestions: ['changed'] }; },
+    }))).toBeNull();
+    expect(called).toBe(false);
+  });
   it('selects exactly the first suggestion', async () => expect(await firstCorrection('typo', checker())).toBe('first'));
   it('preserves case variants and canonical Unicode dictionary entries', async () => {
     expect(await firstCorrection('Typo', checker({ dictionary: async () => ['TYPO'] }))).toBeNull();

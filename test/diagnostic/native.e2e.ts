@@ -54,7 +54,9 @@ describe('Native spellcheck diagnosis', () => {
     await browser.keys('Escape');
     const native = result.nativeContextMenu;
     const renderer = result.rendererWindow[0];
-    const conclusion = native?.misspelledWord === 'typograpy' && native.dictionarySuggestions.length &&
+    const conclusion = result.nativeOS.misspelled && result.nativeOS.suggestions[0] === native?.dictionarySuggestions[0]
+      ? 'FIX VERIFIED: Direct OS spellcheck detects typograpy and returns the same first suggestion as the native menu. The plugin now uses this OS helper and checks Obsidian’s custom dictionary before requesting a correction.'
+      : native?.misspelledWord === 'typograpy' && native.dictionarySuggestions.length &&
       (!renderer.isMisspelled || !renderer.suggestions.length)
       ? 'CONFIRMED: The native spellchecker detects the typo and supplies suggestions, but Electron webFrame does not expose those results. The plugin relies on webFrame, so it skips the correction.'
       : 'See the raw API comparison below; the expected renderer/native mismatch was not fully reproduced.';
@@ -62,9 +64,9 @@ describe('Native spellcheck diagnosis', () => {
       `| Check | Result |\n|---|---|\n| Spellcheck enabled | ${result.enabled} |\n| Languages | ${result.languages.join(', ')} |\n` +
       `| Typo in custom dictionary | ${result.customDictionaryProtectsTypo} |\n| webFrame says misspelled | ${renderer.isMisspelled} |\n` +
       `| webFrame suggestions | ${JSON.stringify(renderer.suggestions)} |\n| Native menu misspelling | ${native?.misspelledWord ?? '(no event)'} |\n` +
-      `| Native menu suggestions | ${JSON.stringify(native?.dictionarySuggestions ?? [])} |\n\n` +
+      `| Native menu suggestions | ${JSON.stringify(native?.dictionarySuggestions ?? [])} |\n` +
       `| Direct OS says misspelled | ${result.nativeOS.misspelled} |\n| Direct OS suggestions | ${JSON.stringify(result.nativeOS.suggestions)} |\n\n` +
-      `The early return is in src/spellcheck.ts, firstCorrection(). No correction is attempted when isMisspelled() is false.\n\n` +
+      `The original failure was the webFrame early return. Production corrections now use the direct OS result through src/native-spellchecker.ts. No menus or editor focus changes are needed.\n\n` +
       `## Raw output\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n`;
     await fs.mkdir('artifacts', { recursive: true });
     await fs.writeFile('artifacts/DIAGNOSIS.md', report);

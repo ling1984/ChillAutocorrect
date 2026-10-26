@@ -369,11 +369,12 @@ function readLine() {
     }
 }
 write({ready: true});
-let line;
-while ((line = readLine()) !== null) {
+while (true) {
     let request;
     const pool = $.NSAutoreleasePool.alloc.init;
     try {
+        const line = readLine();
+        if (line === null) break;
         request = JSON.parse(line);
         const text = $(request.word);
         const range = checker.checkSpellingOfStringStartingAtLanguageWrapInSpellDocumentWithTagWordCount(text, 0, null, false, tag, null);

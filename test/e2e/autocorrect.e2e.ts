@@ -127,8 +127,7 @@ describe('Auto Correct in real Obsidian', () => {
   it('supports Tab and preserves editor indentation', async () => {
     await settings({ enabled: false }); await openText(typo); await browser.keys('Tab');
     const baseline = await documentText();
-    await settings({ tab: true }); await openText(typo); await browser.keys('Tab');
-    await settings({ enabled: true });
+    await settings({ enabled: true, tab: true });
     await openText(typo); await browser.keys('Tab');
     await expectText(baseline.replace(typo, suggestion));
   });
@@ -155,24 +154,31 @@ describe('Auto Correct in real Obsidian', () => {
   });
 
   it('respects additions and removals in the actual session dictionary', async () => {
+    // Use a different word so OS dictionary propagation cannot affect later tests.
+    const dictionaryTypo = 'speling';
+    const dictionarySuggestion = await browser.executeObsidian(async ({ require, plugins }, word) => {
+      const languages = require('electron').remote.getCurrentWebContents().session.getSpellCheckerLanguages();
+      return (await plugins.autoCorrect.nativeSpellchecker.check(word, languages)).suggestions[0];
+    }, dictionaryTypo);
+    expect(dictionarySuggestion).toBeTruthy();
     const alreadySaved = await browser.executeObsidian(async ({ require }, word) => {
       const session = require('electron').remote.getCurrentWebContents().session;
       return (await session.listWordsInSpellCheckerDictionary()).includes(word);
-    }, typo);
+    }, dictionaryTypo);
     expect(alreadySaved).toBe(false);
     try {
-      const added = await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.addWordToSpellCheckerDictionary(word), typo);
+      const added = await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.addWordToSpellCheckerDictionary(word), dictionaryTypo);
       expect(added).toBe(true);
-      await openText(typo); await browser.keys(' '); await expectText(`${typo} `);
-      await browser.pause(200); expect(await documentText()).toBe(`${typo} `);
+      await openText(dictionaryTypo); await browser.keys(' '); await expectText(`${dictionaryTypo} `);
+      await browser.pause(200); expect(await documentText()).toBe(`${dictionaryTypo} `);
     } finally {
-      if (!alreadySaved) await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.removeWordFromSpellCheckerDictionary(word), typo);
+      if (!alreadySaved) await browser.executeObsidian(({ require }, word) => require('electron').remote.getCurrentWebContents().session.removeWordFromSpellCheckerDictionary(word), dictionaryTypo);
     }
     await browser.waitUntil(async () => browser.executeObsidian(async ({ require, plugins }, word) => {
       const languages = require('electron').remote.getCurrentWebContents().session.getSpellCheckerLanguages();
       return (await plugins.autoCorrect.nativeSpellchecker.check(word, languages)).misspelled;
-    }, typo), { timeout: 8000 });
-    await openText(typo); await browser.keys(' '); await expectText(`${suggestion} `);
+    }, dictionaryTypo), { timeout: 8000 });
+    await openText(dictionaryTypo); await browser.keys(' '); await expectText(`${dictionarySuggestion} `);
   });
 
   it('persists settings and removes its handlers on unload', async () => {

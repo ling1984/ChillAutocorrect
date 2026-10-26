@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EditorSelection, EditorState, Transaction, type Extension } from '@codemirror/state';
+import { EditorSelection, EditorState, StateEffect, Transaction, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { history, undo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
@@ -99,6 +99,20 @@ describe('editor transactions', () => {
     trigger(view); await flush(); expect(view.state.selection.main.head).toBe(7);
     view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
     expect(view.state.doc.toString()).toBe('teh '); expect(view.state.selection.main.head).toBe(4);
+  });
+  it('keeps a pending native result through a harmless syntax-state update', async () => {
+    let resolve!: (words: string[]) => void;
+    const { view } = setup('teh', { dictionary: () => new Promise(r => { resolve = r; }) });
+    trigger(view);
+    view.dispatch({ effects: StateEffect.define<boolean>().of(true) });
+    resolve([]); await flush();
+    expect(view.state.doc.toString()).toBe('the ');
+  });
+  it('maps the completed word through Tab indentation at the start of the line', async () => {
+    const { view, runtime } = setup(); runtime.settings.tab = true;
+    view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    view.dispatch({ changes: { from: 0, insert: '\t' }, selection: { anchor: 4 }, annotations: Transaction.userEvent.of('indent') });
+    await flush(); expect(view.state.doc.toString()).toBe('\tthe');
   });
   it('retries after a dictionary failure', async () => {
     let failed = true;
