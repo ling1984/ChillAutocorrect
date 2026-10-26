@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 describe('Native spellcheck diagnosis', () => {
   it('prints the renderer APIs beside the actual native context-menu result', async () => {
     await browser.executeObsidian(async ({ app, obsidian, plugins, require }) => {
-      await (plugins.autoCorrect as unknown as { updateSettings(value: { enabled: boolean }): Promise<void> }).updateSettings({ enabled: false });
+      await (plugins.chillAutocorrect as unknown as { updateSettings(value: { enabled: boolean }): Promise<void> }).updateSettings({ enabled: false });
       const electron = require('electron');
       const session = electron.remote.getCurrentWebContents().session;
       session.setSpellCheckerEnabled(true);
@@ -47,7 +47,7 @@ describe('Native spellcheck diagnosis', () => {
         customDictionaryProtectsTypo: (await session.listWordsInSpellCheckerDictionary()).some((word: string) => word.toLowerCase() === 'typograpy'),
         rendererRequire: check(electron.webFrame),
         rendererWindow: check(winElectron.webFrame),
-        nativeOS: await plugins.autoCorrect.nativeSpellchecker.check('typograpy', session.getSpellCheckerLanguages()),
+        nativeOS: await plugins.chillAutocorrect.nativeSpellchecker.check('typograpy', session.getSpellCheckerLanguages()),
         nativeContextMenu: (window as unknown as { diagnosticMenu: { misspelledWord: string; dictionarySuggestions: string[] } }).diagnosticMenu ?? null,
       };
     });

@@ -2,12 +2,13 @@ import { browser, expect } from '@wdio/globals';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { DEFAULT_SETTINGS, type Settings } from '../../src/settings';
 import fs from 'node:fs/promises';
+import { PLUGIN_ID, PLUGIN_KEY } from '../plugin-identity';
 
 const typo = 'typograpy';
 let suggestion: string;
 
 async function settings(patch: Partial<Settings>) {
-  await browser.executeObsidian(async ({ plugins }, value) => plugins.autoCorrect.updateSettings(value), patch);
+  await browser.executeObsidian(async ({ plugins }, value) => plugins.chillAutocorrect.updateSettings(value), patch);
 }
 
 async function documentText() {
@@ -38,6 +39,12 @@ async function expectText(text: string) {
 
 describe('Auto Correct in real Obsidian', () => {
   before(async () => {
+    await browser.executeObsidian(({ plugins }, id, key) => {
+      const plugin = plugins[key] as unknown as { updateSettings?: unknown } | undefined;
+      if (!plugin || typeof plugin.updateSettings !== 'function') {
+        throw new Error(`Expected plugin '${id}' at plugins.${key}; loaded plugin keys: ${Object.keys(plugins).join(', ') || '(none)'}. Check the manifest ID and plugin load errors.`);
+      }
+    }, PLUGIN_ID, PLUGIN_KEY);
     await browser.executeObsidian(async ({ require, obsidian }) => {
       const session = require('electron').remote.getCurrentWebContents().session;
       const events: string[] = [];
@@ -58,7 +65,7 @@ describe('Auto Correct in real Obsidian', () => {
       // fatal here: retrying for a minute just hides the original crash header.
       await browser.executeObsidian(async ({ require, plugins }, word) => {
         const session = require('electron').remote.getCurrentWebContents().session;
-        const result = await plugins.autoCorrect.nativeSpellchecker.check(word, session.getSpellCheckerLanguages());
+        const result = await plugins.chillAutocorrect.nativeSpellchecker.check(word, session.getSpellCheckerLanguages());
         if (!result.misspelled || result.suggestions.length === 0) throw new Error('Native English spellchecker returned no suggestions for the test typo.');
       }, typo);
     } catch (error) {
@@ -73,7 +80,7 @@ describe('Auto Correct in real Obsidian', () => {
           dictionaryFiles: require('fs').existsSync(dictionaries) ? require('fs').readdirSync(dictionaries) : [],
           editorSpellcheck: document.querySelector('.cm-content')?.getAttribute('spellcheck'),
           text: document.querySelector('.cm-content')?.textContent,
-          helper: plugins.autoCorrect.nativeSpellchecker.diagnostics(),
+          helper: plugins.chillAutocorrect.nativeSpellchecker.diagnostics(),
         };
       }).catch(() => ({ rendererDisconnected: true }));
       await fs.mkdir('artifacts', { recursive: true });
@@ -83,7 +90,7 @@ describe('Auto Correct in real Obsidian', () => {
     }
     suggestion = await browser.executeObsidian(async ({ require, plugins }, word) => {
       const languages = require('electron').remote.getCurrentWebContents().session.getSpellCheckerLanguages();
-      return (await plugins.autoCorrect.nativeSpellchecker.check(word, languages)).suggestions[0];
+      return (await plugins.chillAutocorrect.nativeSpellchecker.check(word, languages)).suggestions[0];
     }, typo);
     expect(suggestion).not.toBe(typo);
   });
@@ -158,10 +165,10 @@ describe('Auto Correct in real Obsidian', () => {
 
   it('persists settings and removes its handlers on unload', async () => {
     await settings({ punctuation: '!', space: false });
-    await obsidianPage.disablePlugin('auto-correct');
+    await obsidianPage.disablePlugin(PLUGIN_ID);
     await openText(typo); await browser.keys(' '); await expectText(`${typo} `);
-    await obsidianPage.enablePlugin('auto-correct');
-    const saved = await browser.executeObsidian(({ plugins }) => plugins.autoCorrect.settings);
+    await obsidianPage.enablePlugin(PLUGIN_ID);
+    const saved = await browser.executeObsidian(({ plugins }) => plugins.chillAutocorrect.settings);
     expect(saved.space).toBe(false); expect(saved.punctuation).toBe('!');
     await openText(typo);
     await browser.execute(() => {
@@ -174,8 +181,8 @@ describe('Auto Correct in real Obsidian', () => {
     try { await expectText(`${suggestion}!`); }
     catch (error) {
       console.log('Reload diagnostics:', await browser.executeObsidian(({ plugins, app, obsidian }) => ({
-        settings: plugins.autoCorrect.settings, active: plugins.autoCorrect.runtime.active,
-        status: (plugins.autoCorrect as unknown as { statusText: string }).statusText,
+        settings: plugins.chillAutocorrect.settings, active: plugins.chillAutocorrect.runtime.active,
+        status: (plugins.chillAutocorrect as unknown as { statusText: string }).statusText,
         key: (window as unknown as { lastDiagnosticKey: unknown }).lastDiagnosticKey,
         text: app.workspace.getActiveViewOfType(obsidian.MarkdownView)!.editor.getValue(),
       })));
@@ -221,7 +228,7 @@ describe('Auto Correct in real Obsidian', () => {
       const observations = [];
       for (const word of candidates) {
         if (saved.has(word.normalize('NFC').toLowerCase())) { observations.push({ word, saved: true }); continue; }
-        const result = await plugins.autoCorrect.nativeSpellchecker.check(word, languages);
+        const result = await plugins.chillAutocorrect.nativeSpellchecker.check(word, languages);
         observations.push({ word, ...result });
         const suggestion = result.suggestions[0];
         if (result.misspelled && typeof suggestion === 'string' && suggestion.length > 0 && suggestion !== word && !/[\r\n]/u.test(suggestion)) {
@@ -259,7 +266,7 @@ describe('Auto Correct in real Obsidian', () => {
       const result = await browser.executeObsidian(async ({ require, plugins }, word) => {
         const session = require('electron').remote.getCurrentWebContents().session;
         if ((await session.listWordsInSpellCheckerDictionary()).includes(word)) return null;
-        return plugins.autoCorrect.nativeSpellchecker.check(word, session.getSpellCheckerLanguages());
+        return plugins.chillAutocorrect.nativeSpellchecker.check(word, session.getSpellCheckerLanguages());
       }, word);
       const first = result?.suggestions[0];
       if (!result?.misspelled || typeof first !== 'string' || !first || first === word || /[\r\n]/u.test(first)) return false;
