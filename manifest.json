@@ -1,9 +1,9 @@
 {
-  "id": "chill-auto-correct",
-  "name": "Chill auto-correct",
+  "id": "chill-autocorrect",
+  "name": "Chill Autocorrect",
   "version": "1.0.0",
   "minAppVersion": "1.14.4",
-  "description": "Chill, non-opionated auto-correct. Space corrects, backspace undoes.",
+  "description": "Chill, non-opionated autocorrect. Space corrects, backspace undoes.",
   "author": "ling1984",
   "isDesktopOnly": true
 }
