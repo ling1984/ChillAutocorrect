@@ -1,9 +1,9 @@
 {
-  "id": "auto-correct",
-  "name": "Auto Correct",
-  "version": "0.1.0",
+  "id": "chill-auto-correct",
+  "name": "Chill auto-correct",
+  "version": "1.0.0",
   "minAppVersion": "1.14.4",
-  "description": "Correct completed words using native spelling suggestions and your Obsidian dictionary.",
-  "author": "Me bro",
+  "description": "Chill, non-opionated auto-correct. Space corrects, backspace undoes.",
+  "author": "ling1984",
   "isDesktopOnly": true
 }
