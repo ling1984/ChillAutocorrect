@@ -12,4 +12,4 @@ It protects words saved in Obsidian’s custom dictionary. Windows and macOS can
 1. Make a folder in your community plugins folder called "chill-autocorrect".
 2. Copy and paste the manifest.json + main.js in.
 3. Refresh in Obsidian and enable the plugin.
-4. Then just type normally...
+4. Just type normally!
