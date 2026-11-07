@@ -117,7 +117,7 @@ export class NativeSpellchecker implements NativeChecker {
     const child = this.child;
     const id = ++this.id;
     return new Promise((resolve, reject) => {
-      const timeoutMs = process.env.CI ? 15_000 : 3_000; // Allow more time on CI as it has to cold-start
+      const timeoutMs = process.env.CI ? 4_500 : 3_000; // Allow more time on CI as it has to cold-start ( we fail if it takes longer than 5s in a separate test)
       const timer = setTimeout(() => {
         this.requests.delete(id);
         reject(new Error(`Native spellcheck request timed out after ${timeoutMs}.`));
